@@ -1,269 +1,93 @@
-<a id="chinese"></a>
+# EGO Planner + PX4 + Gazebo：虚拟机源码与实操资料
 
-# EGO Planner 与 PX4 Gazebo 仿真实操指南
+[中文](#中文) | [English](#english)
 
-**中文** | [English](#english)
+## 中文
 
-基于 Ubuntu 22.04、ROS 2 Humble、PX4 SITL 和 Gazebo Harmonic，记录 EGO Planner 避障规划与 PX4 Offboard 控制的集成流程。用于找回已有环境、核对工作空间，并按终端恢复启动步骤。
+本仓库已补入从原 VMware 虚拟磁盘只读导出的实际项目源码，包含 EGO Planner C++ 实现、Python 控制状态机、ROS 消息、构建文件、启动脚本和 Gazebo 场景配置。源码保留虚拟机内的修改，不是重新下载上游仓库。
 
-本仓库提供操作文档、原始手册、截图与演示视频。完整算法源码请参见文末参考项目；本仓库不包含虚拟机镜像或已编译工作空间。整理期间未重新运行仿真，演示材料来自原实操记录。
+### 源码入口
 
-## 实操画面
+| 路径 | 内容 |
+|---|---|
+| [workspace/src/ego-swarm-ros2](workspace/src/ego-swarm-ros2) | 主规划器、B-spline 优化、地图、轨迹服务器、内部模拟器、px4_msgs |
+| [workspace/src/px4_ego](workspace/src/px4_ego) | Python 控制状态机、mode_key.py |
+| [workspace/src/ego_planner_ros_humble-main](workspace/src/ego_planner_ros_humble-main) | 虚拟机内另一套规划项目，包括 bridge_test、new_pkg 来源 |
+| [workspace/src/ego-planner-ros2-sim](workspace/src/ego-planner-ros2-sim) | 原集成项目及其脚本 |
+| [simulation](simulation) | 实际 PX4 启动配置、Gazebo 脚本、worlds、x500_depth 及依赖模型 |
+| [SOURCE_MANIFEST.json](SOURCE_MANIFEST.json) | 原磁盘路径、文件模式、大小及 SHA-256 |
 
-![Gazebo、RViz 与终端运行画面](assets/images/demo-1.jpeg)
+`workspace/src` 保留 Linux 软链接，原先指向 `/home/ros2/...` 的工作空间内部链接已改为相对链接。两个原始项目目录内的 COLCON_IGNORE 原样保留；构建使用顶层包链接。请在 Linux 上用 Git 克隆，GitHub 的 ZIP 下载不保证还原软链接语义。
 
-![Gazebo 障碍物环境与终端画面](assets/images/demo-2.jpeg)
+原始网格、纹理、模型缩略图和依赖库插图集中保存在 [resources/model-assets.tar.xz](resources/model-assets.tar.xz)，路径清单见 [asset-paths.json](resources/asset-paths.json)。在仓库根目录运行一次恢复程序，它不会覆盖内容不同的现有文件：
 
-截图提取自原手册末页。画面展示了仿真环境和运行界面，不作为当前环境已经恢复成功的验证结果。
-
-## 从这里开始
-
-1. [环境与现有项目恢复](docs/recovery.md)：确认文件、依赖与已有编译产物。
-2. [按终端启动流程](docs/operation.md)：集成入口、控制状态机、键盘操作、规划器和 RViz。
-3. [问题排查与手册修正](docs/troubleshooting.md)：重复启动、话题筛选、启动入口差异。
-4. [原始 Markdown 手册](source/ego_simulation.md) · [原始 PDF](source/ego_simulation.pdf)。
-
-## 系统关系
-
-```mermaid
-flowchart LR
-    G[Gazebo 仿真与传感器] -->|深度图与桥接| E[EGO Planner]
-    R[RViz 目标点] --> E
-    E -->|规划轨迹| C[px4_ego 控制状态机]
-    K[mode_key.py 键盘指令] --> C
-    C -->|ROS 2 / px4_msgs| A[Micro XRCE Agent]
-    A <--> P[PX4 SITL]
-    P <--> G
+```bash
+python3 restore_assets.py
 ```
 
-## 原手册记录的环境
+### 编译与部署边界
 
-| 组件 | 记录 |
-|---|---|
-| 操作系统 | Ubuntu 22.04 |
-| ROS | ROS 2 Humble |
-| 飞控 | PX4 Firmware ≥ 1.14.0；实际提交版本未记录 |
-| 仿真器 | Gazebo Harmonic |
-| 通信 | Micro XRCE Agent、px4_msgs |
-| 控制层 | px4_ego / px4_ego_py |
-| 规划 | ego-swarm-ros2，ROS 包名 ego_planner |
-| 集成入口 | ego-planner-ros2-sim 中的 px4_sitl_ros2.launch.py |
+本仓库包含规划工作空间源码；PX4-Autopilot 完整源码、系统 ROS/Gazebo、MAVROS、Micro XRCE Agent 和编译产物仍需已有环境提供。PX4 的实际定制 launch 文件在 `simulation/px4/`。未在本次导出中重新编译或执行仿真。
 
-这些版本来自原记录，不表示任意新版本组合都已验证。
-
-## 启动速查
-
-先确认原工作空间和脚本存在。每个新终端先加载环境：
+在装好对应依赖的 Ubuntu 22.04 / ROS 2 Humble 环境中，可从源码目录编译：
 
 ```bash
 source /opt/ros/humble/setup.bash
-source ~/planner_ws/install/setup.bash
+cd workspace
+colcon build --symlink-install
+source install/setup.bash
 ```
 
-以下各组分别在独立终端执行，仅作为以后操作参考：
+原启动代码仍使用 `~/PX4-Autopilot`、`~/ros_proj/gazebo_start` 和 `~/.simulation-gazebo` 等路径。迁移时需将 `simulation/px4`、`simulation/gazebo_start`、`simulation/worlds`、`simulation/models`、`simulation/server.config` 对应部署到这些位置，先备份已有修改。克隆本仓库本身不会自动安装飞控或配置这些目录。
 
-**终端 1：集成入口**
+### 当前实际启动方式
 
-```bash
-cd ~/PX4-Autopilot
-ros2 launch ./launch/px4_sitl_ros2.launch.py
-```
-
-已检查的本地压缩包版本包含 MAVROS、Gazebo、PX4 实例 0、MicroXRCEAgent 和深度图桥接。先核对虚拟机内的启动文件；若逻辑一致，不重复单独启动 Gazebo 和 Agent。原记录预期模型名为 `x500_depth_0`。
-
-**终端 2：控制状态机**
+每个终端先 source ROS 和编译后的工作空间。以下分别在四个终端执行：
 
 ```bash
+# 终端 1：Gazebo/PX4/通信桥；25 秒后启动规划器
+ros2 launch ego_planner run_px4_ego.launch.py
+
+# 终端 2：控制状态机
 ros2 run px4_ego_py offboard_control_test
-```
 
-**终端 3：键盘控制**
+# 终端 3：在仓库根目录执行键盘节点
+python3 workspace/src/px4_ego/mode_key.py
 
-```bash
-cd ~/planner_ws/src/px4_ego
-python3 mode_key.py
-```
-
-原记录使用 `t` 起飞，稳定悬停后按 `o` 请求 Offboard。以当前脚本按键定义和飞控反馈为准，按下按键不代表切换一定成功。
-
-**终端 4：EGO Planner**
-
-```bash
-ros2 launch ego_planner single_uav_gazebo.launch.py
-```
-
-原记录建议 PX4 启动约 25 秒后启动规划器，这是当时的经验时间，仍需确认状态与传感器数据就绪。`single_run_in_sim.launch.py` 的用途在原记录中尚未明确，不纳入这条主流程。
-
-**终端 5：RViz**
-
-```bash
+# 终端 4：RViz
 ros2 launch ego_planner rviz.launch.py
 ```
 
-使用原记录中的 `2D Goal Pose` 设置目标；工具名称、目标话题和 Fixed Frame 以实际 RViz 配置为准。
+- 键盘节点使用 input()：输入 `t` 或 `o` 后必须按回车。
+- 当前 `t` 分支包含解锁、请求 Offboard 和起飞悬停，标准定位分支目标 z=-0.9（NED）。
+- `o` 分支等待或跟随规划轨迹，并检查飞控状态。计时和日志不能替代飞控状态验证。
+- 集成入口已包括规划器，勿重复运行另一份 PX4 或规划器入口。
+- PX4 内部延迟 8 秒启动，世界为 ego，SYS_AUTOSTART=4002，MAVROS 目标端口为 14580。
+- `single_run_in_sim.launch.py` 是内部模拟器路线，不是 PX4/Gazebo 主流程的附加步骤。
 
-## 常用检查
+### 文档和演示
 
-```bash
-gz model --list
-sudo lsof -i UDP:8888
-ros2 node list
-ros2 topic list | grep '/fmu/'
-ros2 topic echo /fmu/out/vehicle_local_position --once
-```
+[实际源码核对记录](docs/vm-source-findings.md) · [原操作说明](docs/operation.md) · [环境恢复](docs/recovery.md) · [问题排查](docs/troubleshooting.md) · [原手册](source/ego_simulation.md) · [PDF](source/ego_simulation.pdf)
 
-这里用 `grep '/fmu/'` 修正原文无法匹配示例话题的 `grep px4`。端口监听不等于通信链路已经正常；等待消息的命令可用 Ctrl+C 结束。
+![Gazebo 和 RViz](assets/images/demo-1.jpeg)
+![障碍物场景](assets/images/demo-2.jpeg)
 
-## 演示视频
+[演示一](assets/videos/2026-07-23%2019-21-43.mp4) · [演示二](assets/videos/2026-07-23%2019-26-37.mp4)。视频为原实操记录的压缩版，未剪辑时间线。
 
-- [2026-07-23 19-21-43 原始演示](assets/videos/2026-07-23%2019-21-43.mp4)
-- [2026-07-23 19-26-37 原始演示](assets/videos/2026-07-23%2019-26-37.mp4)
+## English
 
-日期沿用原文件名；网页无法内嵌播放时可下载观看。GitHub 版本压缩转码以便浏览，未剪辑时间线；本地发布包保留原视频。
+This repository now includes the actual project source extracted read-only from the original VMware disk: EGO Planner C++, Python control code, ROS messages, build files, launch scripts and Gazebo configuration. Local VM changes are preserved instead of replacing them with fresh upstream downloads.
 
-## 参考项目与归属
+Browse `workspace/src` for the planner and controller code, and `simulation` for the actual PX4 launch, Gazebo scripts, worlds and the x500_depth model dependency chain. Linux symlinks are preserved; absolute links within the workspace are converted to relative links. Use Git on Linux rather than relying on GitHub ZIP symlink behavior.
 
-本项目是基于既有开源项目的实操整理，不将上游算法和控制代码声明为原创。
+Original meshes, textures, model thumbnails and dependency illustrations are included in `resources/model-assets.tar.xz`. Run `python3 restore_assets.py` at the checkout root to restore their original paths. The script refuses to replace existing files with different contents.
 
-- [ego-planner-ros2-sim](https://github.com/DongnanHu6556/ego-planner-ros2-sim)：集成仿真说明及启动入口。
-- [px4_ego](https://github.com/DongnanHu6556/px4_ego)：PX4 与规划器之间的控制层。
-- [ego-swarm-ros2](https://github.com/DongnanHu6556/ego-swarm-ros2)：规划器参考仓库。
+On a configured Ubuntu 22.04 / ROS 2 Humble system, source ROS, enter `workspace`, run `colcon build --symlink-install`, then source `install/setup.bash`. Full PX4-Autopilot, ROS/Gazebo, MAVROS and Micro XRCE Agent remain external dependencies. No build or simulation was run during extraction. Original launch files still expect `~/PX4-Autopilot`, `~/ros_proj/gazebo_start` and `~/.simulation-gazebo`; deploy the corresponding `simulation` files there after backing up local changes.
 
-参考链接来自本地项目压缩包 README，未锁定上游提交。上游代码遵循各自许可证；本仓库暂未另行授予文档和媒体的开源许可。
+Use `run_px4_ego.launch.py` for the integrated simulation and planner, followed by the Python controller, keyboard node and RViz in separate terminals as shown above. Enter a letter and press Enter. The current `t` branch already requests Offboard and commands takeoff/hover; `o` waits for or follows planner commands. The planner is started after a fixed 25-second delay; PX4 uses an 8-second delay. These timers are not readiness checks.
 
----
+## 来源与许可证 / Attribution and licenses
 
-<a id="english"></a>
+Upstream references: [ego-swarm-ros2](https://github.com/DongnanHu6556/ego-swarm-ros2), [px4_ego](https://github.com/DongnanHu6556/px4_ego), [ego-planner-ros2-sim](https://github.com/DongnanHu6556/ego-planner-ros2-sim).
 
-# EGO Planner with PX4 and Gazebo Simulation Guide
-
-[中文](#chinese) | **English**
-
-A practical guide to integrating EGO Planner obstacle avoidance with PX4 Offboard control using Ubuntu 22.04, ROS 2 Humble, PX4 SITL, and Gazebo Harmonic. It documents how to recover an existing setup, check the workspace, and restore the terminal-by-terminal startup sequence.
-
-This repository contains operating instructions, the original notes, screenshots, and demonstration videos. Refer to the upstream projects below for the algorithm and controller source code. Virtual machine images and compiled workspaces are not included. The simulation was not rerun while preparing these documents; the media comes from the original practical work.
-
-## Screenshots
-
-![Gazebo, RViz, and terminal windows](assets/images/demo-1.jpeg)
-
-![Gazebo obstacle environment and terminal output](assets/images/demo-2.jpeg)
-
-The screenshots were extracted from the final page of the original notes. They illustrate the recorded environment and interfaces, rather than verify that the current setup has been restored successfully.
-
-## Getting started
-
-The detailed guides and original notes below are currently in Chinese. This README provides a bilingual overview and an English startup reference.
-
-1. [Environment and workspace recovery](docs/recovery.md): check paths, dependencies, and existing build artifacts.
-2. [Terminal-by-terminal operation](docs/operation.md): integrated launch, controller, keyboard commands, planner, and RViz.
-3. [Troubleshooting and corrections](docs/troubleshooting.md): duplicate processes, topic filtering, and launch-file differences.
-4. [Original Markdown notes](source/ego_simulation.md) · [Original PDF](source/ego_simulation.pdf).
-
-## System overview
-
-```mermaid
-flowchart LR
-    G[Gazebo simulation and sensors] -->|Depth data and bridges| E[EGO Planner]
-    R[RViz goal] --> E
-    E -->|Planned trajectory| C[px4_ego controller]
-    K[mode_key.py keyboard commands] --> C
-    C -->|ROS 2 / px4_msgs| A[Micro XRCE Agent]
-    A <--> P[PX4 SITL]
-    P <--> G
-```
-
-## Environment recorded in the notes
-
-| Component | Recorded setup |
-|---|---|
-| Operating system | Ubuntu 22.04 |
-| ROS | ROS 2 Humble |
-| Flight controller | PX4 Firmware ≥ 1.14.0; exact commit not recorded |
-| Simulator | Gazebo Harmonic |
-| Communication | Micro XRCE Agent and px4_msgs |
-| Control layer | px4_ego / px4_ego_py |
-| Planner | ego-swarm-ros2; ROS package: ego_planner |
-| Integrated entry point | px4_sitl_ros2.launch.py from ego-planner-ros2-sim |
-
-These are the versions recorded during the original work, not a claim that every newer version combination has been tested.
-
-## Startup reference
-
-First verify that the original workspace and required scripts exist. In each new terminal, load the ROS environment and workspace overlay:
-
-```bash
-source /opt/ros/humble/setup.bash
-source ~/planner_ws/install/setup.bash
-```
-
-Use separate terminals for the following commands. This is a reference for future execution, not a record of commands run during document preparation.
-
-**Terminal 1 — Integrated simulation entry point**
-
-```bash
-cd ~/PX4-Autopilot
-ros2 launch ./launch/px4_sitl_ros2.launch.py
-```
-
-The copy examined in the local project archive already launches MAVROS, Gazebo, PX4 instance 0, MicroXRCEAgent, and depth-image bridges. If the VM's launch file matches it, do not start Gazebo or the Agent a second time. Check the actual launch file before relying on this behavior. The recorded model name is `x500_depth_0`.
-
-**Terminal 2 — Control state machine**
-
-```bash
-ros2 run px4_ego_py offboard_control_test
-```
-
-**Terminal 3 — Keyboard control**
-
-```bash
-cd ~/planner_ws/src/px4_ego
-python3 mode_key.py
-```
-
-The original notes use `t` for takeoff, then `o` to request Offboard after stable hovering. Confirm the current script's key bindings and the flight controller's response; a key press alone does not prove that a mode change succeeded.
-
-**Terminal 4 — EGO Planner**
-
-```bash
-ros2 launch ego_planner single_uav_gazebo.launch.py
-```
-
-The notes suggest waiting about 25 seconds after starting PX4. Treat this as an observation from the original setup, and also verify that state and sensor data are ready. The purpose of `single_run_in_sim.launch.py` was left unresolved in the original notes; it is not included in this main workflow.
-
-**Terminal 5 — RViz**
-
-```bash
-ros2 launch ego_planner rviz.launch.py
-```
-
-Use the goal-setting tool recorded as `2D Goal Pose` to select a target. Confirm the tool, target topic, and Fixed Frame against the actual RViz configuration.
-
-## Useful checks
-
-```bash
-gz model --list
-sudo lsof -i UDP:8888
-ros2 node list
-ros2 topic list | grep '/fmu/'
-ros2 topic echo /fmu/out/vehicle_local_position --once
-```
-
-Filtering with `grep '/fmu/'` corrects the original `grep px4` example, which would not match the listed `/fmu/...` topics. A listening UDP port does not by itself prove that data is flowing. Use Ctrl+C to stop a command waiting for a message.
-
-## Demonstration videos
-
-- [Original demo — 2026-07-23 19-21-43](assets/videos/2026-07-23%2019-21-43.mp4)
-- [Original demo — 2026-07-23 19-26-37](assets/videos/2026-07-23%2019-26-37.mp4)
-
-Dates come from the original filenames. Download the videos if inline playback is unavailable. The GitHub copies are transcoded for web viewing without timeline edits; the local release package retains the original videos.
-
-## References and attribution
-
-This repository documents practical work based on existing open-source projects. It does not claim authorship of the upstream planning algorithms or control code.
-
-- [ego-planner-ros2-sim](https://github.com/DongnanHu6556/ego-planner-ros2-sim): simulation integration and launch entry point.
-- [px4_ego](https://github.com/DongnanHu6556/px4_ego): control layer connecting the planner to PX4.
-- [ego-swarm-ros2](https://github.com/DongnanHu6556/ego-swarm-ros2): planner reference repository.
-
-These links come from the README in the local project archive; upstream commits are not pinned. Upstream code retains its respective licenses. No additional open-source license has been granted for the documentation and media in this repository.
+保留各目录原有 LICENSE、版权声明和 package.xml 许可信息，不将上游算法声明为原创，不对整仓库统一重新授权。Preserved upstream licenses and notices apply to their respective components; this repository does not claim original authorship of upstream algorithms or impose a new blanket license.

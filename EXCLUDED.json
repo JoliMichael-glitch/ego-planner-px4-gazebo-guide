@@ -1,0 +1,18 @@
+[
+  {
+    "source": "/home/ros2/planner_ws/src/ego-swarm-ros2/planner/ego_planner/launch/__pycache__",
+    "reason": "metadata/cache/build"
+  },
+  {
+    "source": "/home/ros2/planner_ws/src/px4_ego/src/px4_ego_py/px4_ego_py/__pycache__",
+    "reason": "metadata/cache/build"
+  },
+  {
+    "source": "/home/ros2/planner_ws/src/px4_ego/.claude",
+    "reason": "metadata/cache/build"
+  },
+  {
+    "source": "/home/ros2/ros_proj/gazebo_start/.claude",
+    "reason": "metadata/cache/build"
+  }
+]
